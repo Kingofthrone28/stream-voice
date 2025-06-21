@@ -30,7 +30,6 @@ A modern, voice-controlled streaming platform built with Next.js 14, featuring a
 ### 📱 Content Discovery
 - **Trending content** carousel on homepage
 - **New releases** section with latest movies
-- **Genre filtering** and content categorization
 - **Movie ratings** and year information display
 - **Detailed movie pages** with descriptions and metadata
 
