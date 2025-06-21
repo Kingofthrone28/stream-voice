@@ -1,0 +1,133 @@
+[
+  {
+    "title": "Avengers Infinity War",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Avengers+Infinity+War+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2018,
+    "rating": 8.4,
+    "duration": "2h 29m",
+    "cast": ["Robert Downey Jr.", "Chris Hemsworth", "Mark Ruffalo"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/avengers_infinity.jpg",
+    "subtitleUrl": "/subtitles/avengers-infinity-war.vtt",
+    "description": "The Avengers face Thanos in an epic battle to save the universe."
+  },
+{
+  "title": "Captain America: Brave New World",
+  "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Captain+America+Brave+New+World+full+HD+Free+-+TheFlixer.mp4",
+  "year": 2025,
+  "rating": 7.1,
+  "duration": "2h 11m",
+  "cast": ["Anthony Mackie", "Danny Ramirez"],
+  "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/captain_america_brave_new_world_wallpaper_4k_2025_by_mrandrew7w7_dj2qhpz-pre.jpg",
+  "description": "Sam Wilson, the new Captain America, faces an international incident and uncovers a global conspiracy."
+},
+  {
+    "title": "Dog Man",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Dog+Man+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2025,
+    "rating": 7.2,
+    "duration": "1h 30m",
+    "cast": ["Animated"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/dogman.jpeg",
+    "description": "Half-dog, half-man hero teams up to save a kitten and his city."
+  },
+{
+  "title": "Final Destination: Bloodlines",
+  "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Final+Destination+Bloodlines+full+HD+Free+-+TheFlixer.mp4",
+  "year": 2025,
+  "rating": 6.8,
+  "duration": "1h 44m",
+  "cast": ["Brec Bassinger", "Teo Briones", "Richard Harmon", "Tony Todd"],
+  "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/final_destination_bloodline.jpg",
+  "description": "Stefani inherits her grandmother's premonition of disaster and, with a new group of friends, must unravel Death's latest design after a near-miss at the Skyview incident."
+},
+  {
+    "title": "Iron Man",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Iron+Man+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2008,
+    "rating": 7.9,
+    "duration": "2h 6m",
+    "cast": ["Robert Downey Jr.", "Gwyneth Paltrow"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/Iron_man.jpg",
+    "description": "Tony Stark builds a suit of armor to fight evil and save the world."
+  },
+  {
+    "title": "John Wick",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+John+Wick+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2014,
+    "rating": 7.4,
+    "duration": "1h 41m",
+    "cast": ["Keanu Reeves", "Michael Nyqvist"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/john-wick.jpg",
+    "description": "A retired assassin seeks vengeance for the loss of his dog."
+  },
+  {
+    "title": "Mickey 17",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Mickey+17+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2024,
+    "rating": 7.0,
+    "duration": "2h 0m",
+    "cast": ["Robert Pattinson"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/mickey_17.jpg",
+    "description": "An expendable on a colonization mission discovers his fate."
+  },
+  {
+    "title": "Plankton The Movie",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Plankton+The+Movie+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2022,
+    "rating": 6.3,
+    "duration": "1h 15m",
+    "cast": ["Animated"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/plankton.jpg",
+    "description": "Animated underwater adventure with Plankton."
+  },
+  {
+    "title": "Shadow Force",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Shadow+Force+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2023,
+    "rating": 5.9,
+    "duration": "1h 38m",
+    "cast": ["Kerry Washington", "Omar Sy"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/shadow_force.jpg",
+    "description": "An elite team is tasked with a dangerous rescue mission."
+  },
+  {
+    "title": "Sinners",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Sinners+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2024,
+    "rating": 6.5,
+    "duration": "1h 40m",
+    "cast": ["Unknown"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/sinners.jpg",
+    "description": "A story of crime and redemption."
+  },
+  {
+    "title": "Sonic the Hedgehog",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Sonic+the+Hedgehog+3+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2020,
+    "rating": 6.5,
+    "duration": "1h 39m",
+    "cast": ["Ben Schwartz", "James Marsden"],
+    "thumbnail": "https://your-bucket.s3.amazonaws.com/thumbnails/sonic.jpg",
+    "description": "Sonic speeds to save the world from Dr. Robotnik."
+  },
+  {
+    "title": "The Incredible Hulk",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+The+Incredible+Hulk+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2008,
+    "rating": 6.7,
+    "duration": "1h 52m",
+    "cast": ["Edward Norton", "Liv Tyler"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/incredible_hulk.jpg",
+    "description": "Bruce Banner seeks a cure for his monstrous alter ego."
+  },
+  {
+    "title": "Thor",
+    "videoURL": "https://streavoice.s3.us-east-2.amazonaws.com/Watch+Thor+full+HD+Free+-+TheFlixer.mp4",
+    "year": 2011,
+    "rating": 7.0,
+    "duration": "1h 55m",
+    "cast": ["Chris Hemsworth", "Natalie Portman"],
+    "thumbnail": "https://streavoice.s3.us-east-2.amazonaws.com/thor.jpg",
+    "description": "The god of thunder is banished to Earth and learns humility."
+  }
+]
