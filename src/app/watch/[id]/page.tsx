@@ -60,7 +60,6 @@ export default async function WatchPage({
           
           <div className="lg:col-span-1">
             <VoiceControlInfo />
-            
             <div className="mt-8 p-4 rounded-lg bg-foreground/5">
               <h2 className="text-xl font-semibold mb-4">Available Voice Commands</h2>
               <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">

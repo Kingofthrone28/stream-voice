@@ -35,6 +35,7 @@ export const useVoiceControl = (
   options: VoiceControlOptions = { mode: 'auto' }
 ) => {
   const [isListening, setIsListening] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<string>('detecting...');
   const speechRecognitionRef = useRef<SpeechRecognitionPolyfill | null>(null);
@@ -70,6 +71,7 @@ export const useVoiceControl = (
 
       // Update current mode after initialization
       setCurrentMode(speechRecognitionRef.current.getCurrentMode());
+      setIsInitialized(true);
     };
 
     initializeSpeechRecognition();
@@ -79,31 +81,35 @@ export const useVoiceControl = (
       if (speechRecognitionRef.current?.isCurrentlyListening()) {
         speechRecognitionRef.current.stop();
       }
+      speechRecognitionRef.current = null;
+      setIsInitialized(false);
     };
   }, [onCommand, options.language]);
 
   /**
    * Start speech recognition
    */
-  const startListening = useCallback(async () => {
+  const startListening = useCallback(async (): Promise<boolean> => {
     if (!speechRecognitionRef.current) {
       setError('Speech recognition not initialized');
-      return;
+      return false;
     }
 
-    if (isListening) {
+    if (speechRecognitionRef.current.isCurrentlyListening()) {
       console.log('Speech recognition already active');
-      return;
+      return true;
     }
 
     try {
       await speechRecognitionRef.current.start();
+      return speechRecognitionRef.current.isCurrentlyListening();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
       setError(`Failed to start speech recognition: ${errorMessage}`);
       console.error('Failed to start speech recognition:', err);
+      return false;
     }
-  }, [isListening]);
+  }, []);
 
   /**
    * Stop speech recognition
@@ -132,6 +138,7 @@ export const useVoiceControl = (
   }, [isListening, startListening, stopListening]);
 
   return {
+    isInitialized,
     isListening,
     error,
     currentMode,

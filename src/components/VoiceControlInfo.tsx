@@ -6,7 +6,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { detectBrowserSupport, getBrowserCompatibilityMessage } from '@/utils/browserSupport';
+import { detectBrowserSupport } from '@/utils/browserSupport';
 
 interface VoiceControlInfoProps {
   currentMode?: string;

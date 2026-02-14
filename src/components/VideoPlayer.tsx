@@ -10,33 +10,65 @@ import { VideoPlayerProps } from '@/types/video';
 const VOICE_COMMANDS = {
   play: {
     match: (cmd: string) => cmd.includes('play'),
-    action: (video: HTMLVideoElement, setIsPlaying: (playing: boolean) => void) => {
+    action: ({
+      video,
+      setIsPlaying
+    }: {
+      video: HTMLVideoElement;
+      setIsPlaying: (playing: boolean) => void;
+      setShowSubtitles: (show: boolean) => void;
+    }) => {
       video.play();
       setIsPlaying(true);
     }
   },
   pause: {
     match: (cmd: string) => cmd.includes('pause'),
-    action: (video: HTMLVideoElement, setIsPlaying: (playing: boolean) => void) => {
+    action: ({
+      video,
+      setIsPlaying
+    }: {
+      video: HTMLVideoElement;
+      setIsPlaying: (playing: boolean) => void;
+      setShowSubtitles: (show: boolean) => void;
+    }) => {
       video.pause();
       setIsPlaying(false);
     }
   },
   skipIntro: {
     match: (cmd: string) => cmd.includes('skip intro'),
-    action: (video: HTMLVideoElement) => {
+    action: ({
+      video
+    }: {
+      video: HTMLVideoElement;
+      setIsPlaying: (playing: boolean) => void;
+      setShowSubtitles: (show: boolean) => void;
+    }) => {
       video.currentTime += 90;
     }
   },
   subtitlesOn: {
-    match: (cmd: string) => cmd.includes('subtitles on'),
-    action: (_: HTMLVideoElement, setIsPlaying: (playing: boolean) => void, setShowSubtitles: (show: boolean) => void) => {
+    match: (cmd: string) => cmd.includes('turn on subtitles'),
+    action: ({
+      setShowSubtitles
+    }: {
+      video: HTMLVideoElement;
+      setIsPlaying: (playing: boolean) => void;
+      setShowSubtitles: (show: boolean) => void;
+    }) => {
       setShowSubtitles(true);
     }
   },
   subtitlesOff: {
-    match: (cmd: string) => cmd.includes('subtitles off'),
-    action: (_: HTMLVideoElement, setIsPlaying: (playing: boolean) => void, setShowSubtitles: (show: boolean) => void) => {
+    match: (cmd: string) => cmd.includes('turn off subtitles'),
+    action: ({
+      setShowSubtitles
+    }: {
+      video: HTMLVideoElement;
+      setIsPlaying: (playing: boolean) => void;
+      setShowSubtitles: (show: boolean) => void;
+    }) => {
       setShowSubtitles(false);
     }
   }
@@ -71,7 +103,8 @@ type VideoEventHandlers = {
  * ```
  */
 export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProps) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const hasAutoPromptedRef = useRef(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -99,24 +132,63 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
    * Handles voice commands for video playback control using a command pattern
    * @param command - The voice command to execute
    */
-  const handleCommand = (command: string) => {
+  const handleCommand = useCallback((command: string) => {
     const video = videoRef.current;
     if (!video) return;
 
     // Find and execute the matching command
     Object.values(VOICE_COMMANDS).some(({ match, action }) => {
       if (match(command)) {
-        action(video, setIsPlaying, setShowSubtitles);
+        action({ video, setIsPlaying, setShowSubtitles });
         return true; // Stop iteration after first match
       }
       return false;
     });
-  };
+  }, []);
 
-  const { isListening, error, currentMode, startListening, stopListening } = useVoiceControl(
+  const {
+    isInitialized,
+    isListening,
+    error,
+    currentMode,
+    startListening,
+    stopListening
+  } = useVoiceControl(
     { onCommand: handleCommand },
     { mode: 'auto', language: 'en-US' }
   );
+
+  /**
+   * Attempt a one-time auto-start after speech recognition is initialized.
+   */
+  const attemptAutoStart = useCallback(async () => {
+    if (hasAutoPromptedRef.current || !isInitialized) return;
+
+    const didStart = await startListening();
+    if (didStart) {
+      hasAutoPromptedRef.current = true;
+    }
+  }, [isInitialized, startListening]);
+
+  /**
+   * Attach native video element and attempt browser autoplay.
+   */
+  const handleVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    if (!node) return;
+
+    void node.play().catch(() => {
+      // Autoplay can be blocked until user interaction.
+    });
+  }, []);
+
+  /**
+   * Run auto-start when the video exists and voice control has initialized.
+   */
+  useEffect(() => {
+    if (!videoRef.current || hasAutoPromptedRef.current || !isInitialized) return;
+    void attemptAutoStart();
+  }, [attemptAutoStart, isInitialized]);
 
   /**
    * Memoized event handlers to prevent recreating on every render
@@ -191,7 +263,7 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
   return (
     <div className="relative w-full aspect-video bg-black">
       <video
-        ref={videoRef}
+        ref={handleVideoRef}
         src={src}
         poster={poster}
         className="w-full h-full"
@@ -209,7 +281,7 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
         )}
       </video>
 
-      <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
+      {/* <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
         <div className="flex items-center justify-between text-white">
           <div className="flex items-center gap-4">
             <button
@@ -257,7 +329,7 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
             </button>
           </div>
         </div>
-      </div>
+      </div> */}
 
       {error && (
         <div className="absolute top-4 right-4 bg-red-500 text-white px-4 py-2 rounded" role="alert">

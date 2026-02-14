@@ -41,7 +41,7 @@ export function detectBrowserSupport(): BrowserSupportInfo {
   // Check MediaRecorder support
   const hasMediaRecorder = !!(
     navigator.mediaDevices &&
-    navigator.mediaDevices.getUserMedia &&
+    typeof navigator.mediaDevices.getUserMedia === 'function' &&
     'MediaRecorder' in window
   );
 

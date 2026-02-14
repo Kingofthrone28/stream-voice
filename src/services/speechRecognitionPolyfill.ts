@@ -19,6 +19,7 @@ export class SpeechRecognitionPolyfill {
   private options: SpeechRecognitionPolyfillOptions;
   private recognition: any = null;
   private mediaRecorder: MediaRecorder | null = null;
+  private mediaStream: MediaStream | null = null;
   private isListening = false;
   private fallbackMode: 'native' | 'server' | 'annyang' = 'native';
 
@@ -68,8 +69,8 @@ export class SpeechRecognitionPolyfill {
    */
   private hasMediaRecorderSupport(): boolean {
     return !!(navigator.mediaDevices && 
-              navigator.mediaDevices.getUserMedia && 
-              'MediaRecorder' in window);
+             typeof navigator.mediaDevices.getUserMedia === 'function' && 
+             'MediaRecorder' in window);
   }
 
   /**
@@ -83,12 +84,17 @@ export class SpeechRecognitionPolyfill {
         case 'native':
           await this.startNativeRecognition();
           break;
+        case 'server':
+          await this.startServerRecognition();
+          this.isListening = true;
+          this.options.onStart?.();
+          break;
         case 'annyang':
           await this.startAnnyangRecognition();
+          this.isListening = true;
+          this.options.onStart?.();
           break;
       }
-      this.isListening = true;
-      this.options.onStart?.();
     } catch (error) {
       this.options.onError?.(`Failed to start speech recognition: ${error}`);
     }
@@ -106,15 +112,20 @@ export class SpeechRecognitionPolyfill {
           this.recognition?.stop();
           break;
         case 'server':
-          this.mediaRecorder?.stop();
+          if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+            this.mediaRecorder.stop();
+          }
+          this.stopAllMediaTracks();
+          this.isListening = false;
+          this.options.onEnd?.();
           break;
         case 'annyang':
           // @ts-ignore
           if (window.annyang) window.annyang.pause();
+          this.isListening = false;
+          this.options.onEnd?.();
           break;
       }
-      this.isListening = false;
-      this.options.onEnd?.();
     } catch (error) {
       this.options.onError?.(`Failed to stop speech recognition: ${error}`);
     }
@@ -131,6 +142,11 @@ export class SpeechRecognitionPolyfill {
     this.recognition.interimResults = this.options.interimResults;
     this.recognition.lang = this.options.lang;
 
+    this.recognition.onstart = () => {
+      this.isListening = true;
+      this.options.onStart?.();
+    };
+
     this.recognition.onresult = (event: any) => {
       const result = event.results[event.results.length - 1];
       const transcript = result[0].transcript;
@@ -139,7 +155,12 @@ export class SpeechRecognitionPolyfill {
     };
 
     this.recognition.onerror = (event: any) => {
-      this.options.onError?.(`Speech recognition error: ${event.error}`);
+      const error = String(event.error || 'unknown');
+      this.options.onError?.(`Speech recognition error: ${error}`);
+      if (error === 'not-allowed' || error === 'service-not-allowed') {
+        this.isListening = false;
+        this.options.onEnd?.();
+      }
     };
 
     this.recognition.onend = () => {
@@ -153,18 +174,31 @@ export class SpeechRecognitionPolyfill {
   /**
    * Start server-side speech recognition
    */
-  // private async startServerRecognition(): Promise<void> {
-  //   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  //   this.mediaRecorder = new MediaRecorder(stream);
+  private async startServerRecognition(): Promise<void> {
+    this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    this.mediaRecorder = new MediaRecorder(this.mediaStream);
 
-  //   await SpeechRecognitionService.streamAudioToText(
-  //     this.mediaRecorder,
-  //     (transcript) => {
-  //       this.options.onResult?.(transcript, 1.0);
-  //     },
-  //     'whisper'
-  //   );
-  // }
+    this.mediaRecorder.addEventListener('stop', () => {
+      this.stopAllMediaTracks();
+    }, { once: true });
+
+    void SpeechRecognitionService.streamAudioToText(
+      this.mediaRecorder,
+      (transcript) => {
+        this.options.onResult?.(transcript, 1.0);
+      },
+      'whisper'
+    ).catch((error) => {
+      this.options.onError?.(`Server speech recognition error: ${error}`);
+      this.stop();
+    });
+  }
+
+  private stopAllMediaTracks(): void {
+    this.mediaStream?.getTracks().forEach((track) => track.stop());
+    this.mediaStream = null;
+    this.mediaRecorder = null;
+  }
 
   /**
    * Start annyang.js polyfill recognition
