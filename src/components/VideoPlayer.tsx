@@ -3,76 +3,57 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useVoiceControl } from '../hooks/useVoiceControl';
 import { VideoPlayerProps } from '@/types/video';
+const VOICE_TRACE = process.env.NEXT_PUBLIC_VOICE_TRACE === 'true';
+
+type VoiceCommandContext = {
+  video: HTMLVideoElement;
+  setIsPlaying: (playing: boolean) => void;
+  setShowSubtitles: (show: boolean) => void;
+};
+
+type VoiceCommandDefinition = {
+  phrases: string[];
+  action: (context: VoiceCommandContext) => void;
+};
 
 /**
  * Map of voice commands to their corresponding actions
  */
-const VOICE_COMMANDS = {
+const VOICE_COMMANDS: Record<string, VoiceCommandDefinition> = {
   play: {
-    match: (cmd: string) => cmd.includes('play'),
-    action: ({
-      video,
-      setIsPlaying
-    }: {
-      video: HTMLVideoElement;
-      setIsPlaying: (playing: boolean) => void;
-      setShowSubtitles: (show: boolean) => void;
-    }) => {
-      video.play();
-      setIsPlaying(true);
+    phrases: ['play', 'resume', 'play movie', 'resume movie'],
+    action: ({ video, setIsPlaying }: VoiceCommandContext) => {
+      void video.play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
     }
   },
   pause: {
-    match: (cmd: string) => cmd.includes('pause'),
-    action: ({
-      video,
-      setIsPlaying
-    }: {
-      video: HTMLVideoElement;
-      setIsPlaying: (playing: boolean) => void;
-      setShowSubtitles: (show: boolean) => void;
-    }) => {
+    phrases: ['pause', 'stop', 'pause movie', 'stop movie'],
+    action: ({ video, setIsPlaying }: VoiceCommandContext) => {
       video.pause();
       setIsPlaying(false);
     }
   },
   skipIntro: {
-    match: (cmd: string) => cmd.includes('skip intro'),
-    action: ({
-      video
-    }: {
-      video: HTMLVideoElement;
-      setIsPlaying: (playing: boolean) => void;
-      setShowSubtitles: (show: boolean) => void;
-    }) => {
+    phrases: ['skip intro'],
+    action: ({ video }: VoiceCommandContext) => {
       video.currentTime += 90;
     }
   },
   subtitlesOn: {
-    match: (cmd: string) => cmd.includes('turn on subtitles'),
-    action: ({
-      setShowSubtitles
-    }: {
-      video: HTMLVideoElement;
-      setIsPlaying: (playing: boolean) => void;
-      setShowSubtitles: (show: boolean) => void;
-    }) => {
+    phrases: ['turn on subtitles', 'subtitles on'],
+    action: ({ setShowSubtitles }: VoiceCommandContext) => {
       setShowSubtitles(true);
     }
   },
   subtitlesOff: {
-    match: (cmd: string) => cmd.includes('turn off subtitles'),
-    action: ({
-      setShowSubtitles
-    }: {
-      video: HTMLVideoElement;
-      setIsPlaying: (playing: boolean) => void;
-      setShowSubtitles: (show: boolean) => void;
-    }) => {
+    phrases: ['turn off subtitles', 'subtitles off'],
+    action: ({ setShowSubtitles }: VoiceCommandContext) => {
       setShowSubtitles(false);
     }
   }
-} as const;
+};
 
 /**
  * Type for video event handlers
@@ -136,26 +117,63 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
     const video = videoRef.current;
     if (!video) return;
 
-    // Find and execute the matching command
-    Object.values(VOICE_COMMANDS).some(({ match, action }) => {
-      if (match(command)) {
-        action({ video, setIsPlaying, setShowSubtitles });
-        return true; // Stop iteration after first match
+    // Only trigger commands that appear at the end of the utterance,
+    // which reduces accidental matches from background conversation.
+    const normalizedCommand = command
+      .toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    let bestMatchIndex = -1;
+    let bestMatchKey: keyof typeof VOICE_COMMANDS | null = null;
+
+    Object.entries(VOICE_COMMANDS).forEach(([key, { phrases }]) => {
+      const latestPhraseIndex = phrases.reduce((maxIndex, phrase) => {
+        const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const endMatch = new RegExp(`\\b${escaped}\\b\\s*$`).exec(normalizedCommand);
+        const phraseIndex = endMatch ? endMatch.index : -1;
+        return phraseIndex > maxIndex ? phraseIndex : maxIndex;
+      }, -1);
+
+      if (latestPhraseIndex >= 0 && latestPhraseIndex > bestMatchIndex) {
+        bestMatchIndex = latestPhraseIndex;
+        bestMatchKey = key as keyof typeof VOICE_COMMANDS;
       }
-      return false;
     });
+
+    if (bestMatchKey) {
+      if (VOICE_TRACE) {
+        console.log('[VOICE][VideoPlayer] command.matched', {
+          command: normalizedCommand,
+          matched: bestMatchKey,
+          at: bestMatchIndex,
+        });
+      }
+      VOICE_COMMANDS[bestMatchKey].action({ video, setIsPlaying, setShowSubtitles });
+    } else if (VOICE_TRACE) {
+      console.log('[VOICE][VideoPlayer] command.unmatched', { command: normalizedCommand });
+    }
   }, []);
+
+  // Resolve engine safely (fallback to 'whisper' if env var is not present)
+  const selectedEngine: 'google' | 'whisper' =
+    (typeof process !== 'undefined' &&
+      process?.env?.NEXT_PUBLIC_VOICE_ENGINE === 'google')
+      ? 'google'
+      : 'whisper';
 
   const {
     isInitialized,
     isListening,
     error,
     currentMode,
+    pipelineState,
+    wakeArmed,
     startListening,
     stopListening
   } = useVoiceControl(
     { onCommand: handleCommand },
-    { mode: 'auto', language: 'en-US' }
+    { mode: 'server', language: 'en-US', engine: selectedEngine}
   );
 
   /**
@@ -188,6 +206,28 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
   useEffect(() => {
     if (!videoRef.current || hasAutoPromptedRef.current || !isInitialized) return;
     void attemptAutoStart();
+  }, [attemptAutoStart, isInitialized]);
+
+  /**
+   * Firefox and some browsers can reject mic start without a user gesture.
+   * Retry once on the first interaction if auto-start did not succeed.
+   */
+  useEffect(() => {
+    if (hasAutoPromptedRef.current || !isInitialized) return;
+
+    const retryOnInteraction = () => {
+      void attemptAutoStart();
+    };
+
+    window.addEventListener('pointerdown', retryOnInteraction, { once: true });
+    window.addEventListener('keydown', retryOnInteraction, { once: true });
+    window.addEventListener('touchstart', retryOnInteraction, { once: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', retryOnInteraction);
+      window.removeEventListener('keydown', retryOnInteraction);
+      window.removeEventListener('touchstart', retryOnInteraction);
+    };
   }, [attemptAutoStart, isInitialized]);
 
   /**
@@ -281,7 +321,7 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
         )}
       </video>
 
-      {/* <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
+      <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
         <div className="flex items-center justify-between text-white">
           <div className="flex items-center gap-4">
             <button
@@ -329,7 +369,7 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
             </button>
           </div>
         </div>
-      </div> */}
+      </div>
 
       {error && (
         <div className="absolute top-4 right-4 bg-red-500 text-white px-4 py-2 rounded" role="alert">
@@ -337,13 +377,20 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
         </div>
       )}
 
-      {/* Voice Recognition Status */}
-      {isListening && (
-        <div className="absolute top-4 left-4 bg-green-500 text-white px-4 py-2 rounded flex items-center gap-2">
-          <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-          Listening ({currentMode})
-        </div>
-      )}
+      <div
+        className={`absolute top-4 left-4 text-white px-4 py-2 rounded flex items-center gap-2 ${
+          pipelineState === 'listening'
+            ? 'bg-green-600'
+            : pipelineState === 'connecting'
+              ? 'bg-amber-600'
+              : pipelineState === 'error'
+                ? 'bg-red-600'
+                : 'bg-slate-700/90'
+        }`}
+      >
+        <div className={`w-2 h-2 bg-white rounded-full ${isListening ? 'animate-pulse' : ''}`}></div>
+        Voice: {pipelineState} ({currentMode}) {wakeArmed ? '• wake armed' : '• waiting wake'}
+      </div>
     </div>
   );
-}; 
+};

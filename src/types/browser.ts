@@ -1,8 +1,8 @@
 export interface BrowserSupportInfo {
   hasNativeSpeechRecognition: boolean;
   hasMediaRecorder: boolean;
-  canUsePolyfill: boolean;
+  canUseServerRecognition: boolean;
   browserName: string;
-  recommendedMode: 'native' | 'server' | 'polyfill';
+  recommendedMode: 'native' | 'server';
   supportMessage: string;
 }

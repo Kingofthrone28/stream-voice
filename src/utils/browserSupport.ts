@@ -7,9 +7,9 @@
 export interface BrowserSupportInfo {
   hasNativeSpeechRecognition: boolean;
   hasMediaRecorder: boolean;
-  canUsePolyfill: boolean;
+  canUseServerRecognition: boolean;
   browserName: string;
-  recommendedMode: 'native' | 'server' | 'polyfill';
+  recommendedMode: 'native' | 'server';
   supportMessage: string;
 }
 
@@ -45,24 +45,22 @@ export function detectBrowserSupport(): BrowserSupportInfo {
     'MediaRecorder' in window
   );
 
-  // Check if polyfill can be used (requires HTTPS or localhost)
-  const canUsePolyfill = location.protocol === 'https:' || 
-                        location.hostname === 'localhost' ||
-                        location.hostname === '127.0.0.1';
+  // Server recognition requires secure context (or localhost) for mic capture.
+  const canUseServerRecognition = (location.protocol === 'https:' ||
+                                  location.hostname === 'localhost' ||
+                                  location.hostname === '127.0.0.1') &&
+                                  hasMediaRecorder;
 
   // Determine recommended mode
-  let recommendedMode: 'native' | 'server' | 'polyfill' = 'polyfill';
+  let recommendedMode: 'native' | 'server' = 'server';
   let supportMessage = '';
 
   if (hasNativeSpeechRecognition) {
     recommendedMode = 'native';
     supportMessage = `${browserName} has excellent native speech recognition support.`;
-  } else if (hasMediaRecorder && canUsePolyfill) {
+  } else if (canUseServerRecognition) {
     recommendedMode = 'server';
     supportMessage = `${browserName} will use server-side speech recognition for best results.`;
-  } else if (canUsePolyfill) {
-    recommendedMode = 'polyfill';
-    supportMessage = `${browserName} will use a JavaScript polyfill for speech recognition.`;
   } else {
     supportMessage = `${browserName} has limited speech recognition support. Please use HTTPS or a supported browser.`;
   }
@@ -70,7 +68,7 @@ export function detectBrowserSupport(): BrowserSupportInfo {
   return {
     hasNativeSpeechRecognition,
     hasMediaRecorder,
-    canUsePolyfill,
+    canUseServerRecognition,
     browserName,
     recommendedMode,
     supportMessage
@@ -84,12 +82,12 @@ export function getBrowserCompatibilityMessage(): string {
   const support = detectBrowserSupport();
   
   const messages = {
-    Chrome: 'Chrome provides the best speech recognition experience with native Web Speech API support.',
-    Firefox: 'Firefox will use our server-side speech recognition or JavaScript polyfill for voice commands.',
-    Safari: 'Safari has limited speech recognition support. Server-side processing will be used when possible.',
-    Edge: 'Edge supports speech recognition through our compatibility layer.',
-    Opera: 'Opera will use our fallback speech recognition methods.',
-    Unknown: 'Your browser will automatically select the best available speech recognition method.'
+    Chrome: 'Chrome supports native Web Speech, with server transcription as fallback.',
+    Firefox: 'Firefox uses server-side speech recognition for voice commands.',
+    Safari: 'Safari uses server-side speech recognition when microphone permissions are granted.',
+    Edge: 'Edge uses server-side speech recognition or native support when available.',
+    Opera: 'Opera uses server-side speech recognition for compatibility.',
+    Unknown: 'Your browser will automatically select native or server speech recognition.'
   };
 
   return messages[support.browserName as keyof typeof messages] || messages.Unknown;
@@ -101,6 +99,5 @@ export function getBrowserCompatibilityMessage(): string {
 export function canUseSpeechRecognition(): boolean {
   const support = detectBrowserSupport();
   return support.hasNativeSpeechRecognition || 
-         support.hasMediaRecorder || 
-         support.canUsePolyfill;
-} 
+         support.canUseServerRecognition;
+}
