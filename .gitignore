@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+backend/voice-service/.deps/
 /.pnp
 .pnp.*
 .yarn/*

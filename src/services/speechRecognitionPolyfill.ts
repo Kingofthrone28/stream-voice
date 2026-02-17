@@ -3,7 +3,7 @@
  * Provides cross-browser speech recognition support using multiple fallback strategies
  */
 
-import { SpeechRecognitionService } from './speechRecognition';
+import { SpeechRecognitionService, TranscriptEventType } from './speechRecognition';
 const VOICE_TRACE = process.env.NEXT_PUBLIC_VOICE_TRACE === 'true';
 
 const voiceTrace = (event: string, data?: Record<string, unknown>) => {
@@ -17,7 +17,7 @@ export interface SpeechRecognitionPolyfillOptions {
   continuous?: boolean;
   interimResults?: boolean;
   lang?: string;
-  onResult?: (transcript: string, confidence: number) => void;
+  onResult?: (transcript: string, confidence: number, eventType: TranscriptEventType) => void;
   onError?: (error: string) => void;
   onStart?: () => void;
   onEnd?: () => void;
@@ -197,7 +197,7 @@ export class SpeechRecognitionPolyfill {
       const result = event.results[event.results.length - 1];
       const transcript = result[0].transcript;
       const confidence = result[0].confidence || 1.0;
-      this.options.onResult?.(transcript, confidence);
+      this.options.onResult?.(transcript, confidence, 'final');
     };
 
     this.recognition.onerror = (event: any) => {
@@ -246,8 +246,8 @@ export class SpeechRecognitionPolyfill {
     voiceTrace('server.stream.start', { sessionId, engine: this.options.engine || 'whisper' });
     this.streamPromise = SpeechRecognitionService.streamAudioToText(
       this.mediaRecorder,
-      (transcript, confidence) => {
-        this.options.onResult?.(transcript, confidence || 0);
+      (event) => {
+        this.options.onResult?.(event.text, event.confidence || 0, event.eventType);
       },
       this.options.engine || 'whisper'
     )

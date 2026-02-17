@@ -18,10 +18,11 @@ type VoiceCommandDefinition = {
 
 /**
  * Map of voice commands to their corresponding actions
+ * Includes common Whisper mishearings for robustness
  */
 const VOICE_COMMANDS: Record<string, VoiceCommandDefinition> = {
   play: {
-    phrases: ['play', 'resume', 'play movie', 'resume movie'],
+    phrases: ['play', 'resume', 'start', 'play movie', 'resume movie', 'start movie', 'plate', 'clay'],
     action: ({ video, setIsPlaying }: VoiceCommandContext) => {
       void video.play()
         .then(() => setIsPlaying(true))
@@ -29,30 +30,72 @@ const VOICE_COMMANDS: Record<string, VoiceCommandDefinition> = {
     }
   },
   pause: {
-    phrases: ['pause', 'stop', 'pause movie', 'stop movie'],
+    phrases: ['pause', 'stop', 'pause movie', 'stop movie', 'paws', 'pos', 'halls', 'cause'],
     action: ({ video, setIsPlaying }: VoiceCommandContext) => {
       video.pause();
       setIsPlaying(false);
     }
   },
   skipIntro: {
-    phrases: ['skip intro'],
+    phrases: ['skip intro', 'skip the intro', 'skip it', 'skipper', 'skip'],
     action: ({ video }: VoiceCommandContext) => {
       video.currentTime += 90;
     }
   },
   subtitlesOn: {
-    phrases: ['turn on subtitles', 'subtitles on'],
+    phrases: [
+      'turn on subtitles', 'subtitles on', 'captions on', 'turn on captions',
+      'enable subtitles', 'show subtitles', 'sub titles on',
+      // Common Whisper mishearings
+      'sub pattles on', 'sub paddles on', 'sub battles on', 'sub tattles on',
+      'subtle zon', 'subtiles on', 'suttles on', 'supples on'
+    ],
     action: ({ setShowSubtitles }: VoiceCommandContext) => {
       setShowSubtitles(true);
     }
   },
   subtitlesOff: {
-    phrases: ['turn off subtitles', 'subtitles off'],
+    phrases: [
+      'turn off subtitles', 'subtitles off', 'captions off', 'turn off captions',
+      'disable subtitles', 'hide subtitles', 'sub titles off',
+      // Common Whisper mishearings
+      'sub pattles off', 'sub paddles off', 'sub battles off', 'sub tattles off',
+      'subtle zoff', 'subtiles off', 'suttles off', 'supples off',
+      'sub pattles', 'sub paddles', 'sub battles' // Without "off" suffix
+    ],
     action: ({ setShowSubtitles }: VoiceCommandContext) => {
       setShowSubtitles(false);
     }
   }
+};
+
+/**
+ * Fuzzy match helper - checks if input contains words similar to target
+ * Uses simple edit distance for short words
+ */
+const fuzzyMatch = (input: string, target: string): boolean => {
+  // Exact match
+  if (input.includes(target)) return true;
+  
+  // Check each word in input against target words
+  const inputWords = input.split(' ');
+  const targetWords = target.split(' ');
+  
+  let matchedWords = 0;
+  for (const targetWord of targetWords) {
+    for (const inputWord of inputWords) {
+      if (inputWord === targetWord || 
+          (inputWord.length > 3 && targetWord.length > 3 && 
+           (inputWord.startsWith(targetWord.slice(0, 3)) || 
+            targetWord.startsWith(inputWord.slice(0, 3))))) {
+        matchedWords++;
+        break;
+      }
+    }
+  }
+  
+  // Match if at least half the target words are found
+  return matchedWords >= Math.ceil(targetWords.length / 2);
 };
 
 /**
@@ -110,47 +153,54 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
   }, [showSubtitles, subtitleUrl]);
 
   /**
-   * Handles voice commands for video playback control using a command pattern
-   * @param command - The voice command to execute
+   * Handles voice commands for video playback control
+   * Uses exact matching first, then fuzzy matching as fallback
    */
   const handleCommand = useCallback((command: string) => {
     const video = videoRef.current;
     if (!video) return;
 
-    // Only trigger commands that appear at the end of the utterance,
-    // which reduces accidental matches from background conversation.
     const normalizedCommand = command
       .toLowerCase()
       .replace(/[^\w\s]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    let bestMatchIndex = -1;
-    let bestMatchKey: keyof typeof VOICE_COMMANDS | null = null;
 
-    Object.entries(VOICE_COMMANDS).forEach(([key, { phrases }]) => {
-      const latestPhraseIndex = phrases.reduce((maxIndex, phrase) => {
-        const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const endMatch = new RegExp(`\\b${escaped}\\b\\s*$`).exec(normalizedCommand);
-        const phraseIndex = endMatch ? endMatch.index : -1;
-        return phraseIndex > maxIndex ? phraseIndex : maxIndex;
-      }, -1);
-
-      if (latestPhraseIndex >= 0 && latestPhraseIndex > bestMatchIndex) {
-        bestMatchIndex = latestPhraseIndex;
-        bestMatchKey = key as keyof typeof VOICE_COMMANDS;
+    // First pass: exact phrase matching (anywhere in command)
+    for (const [key, { phrases, action }] of Object.entries(VOICE_COMMANDS)) {
+      for (const phrase of phrases) {
+        if (normalizedCommand.includes(phrase)) {
+          if (VOICE_TRACE) {
+            console.log('[VOICE][VideoPlayer] command.matched (exact)', {
+              command: normalizedCommand,
+              matched: key,
+              phrase,
+            });
+          }
+          action({ video, setIsPlaying, setShowSubtitles });
+          return;
+        }
       }
-    });
+    }
 
-    if (bestMatchKey) {
-      if (VOICE_TRACE) {
-        console.log('[VOICE][VideoPlayer] command.matched', {
-          command: normalizedCommand,
-          matched: bestMatchKey,
-          at: bestMatchIndex,
-        });
+    // Second pass: fuzzy matching for mishearings
+    for (const [key, { phrases, action }] of Object.entries(VOICE_COMMANDS)) {
+      for (const phrase of phrases) {
+        if (fuzzyMatch(normalizedCommand, phrase)) {
+          if (VOICE_TRACE) {
+            console.log('[VOICE][VideoPlayer] command.matched (fuzzy)', {
+              command: normalizedCommand,
+              matched: key,
+              phrase,
+            });
+          }
+          action({ video, setIsPlaying, setShowSubtitles });
+          return;
+        }
       }
-      VOICE_COMMANDS[bestMatchKey].action({ video, setIsPlaying, setShowSubtitles });
-    } else if (VOICE_TRACE) {
+    }
+
+    if (VOICE_TRACE) {
       console.log('[VOICE][VideoPlayer] command.unmatched', { command: normalizedCommand });
     }
   }, []);

@@ -57,6 +57,22 @@ WHISPER_LANGUAGE=en
 WHISPER_VAD_FILTER=false
 ```
 
+Optional voice command settings (frontend):
+
+```bash
+# Wake phrase is DISABLED by default. Set to 'true' to require "hey stream" before commands.
+NEXT_PUBLIC_ENABLE_WAKE_PHRASE=false
+NEXT_PUBLIC_WAKE_PHRASE=hey stream
+NEXT_PUBLIC_WAKE_ALIASES=ok stream,okay stream
+NEXT_PUBLIC_WAKE_WINDOW_MS=5000
+# Confidence threshold (0-1). Default 0 accepts all transcriptions.
+NEXT_PUBLIC_COMMAND_CONFIDENCE_MIN=0
+# Audio chunk interval in ms. Default 500ms balances latency with reliability.
+NEXT_PUBLIC_AUDIO_TIMESLICE_MS=500
+# Enable verbose voice logging
+NEXT_PUBLIC_VOICE_TRACE=false
+```
+
 ## Local Run
 
 Frontend:

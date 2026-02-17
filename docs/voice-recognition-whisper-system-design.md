@@ -155,6 +155,32 @@ Build reliable voice command recognition for Chrome, Firefox, Edge, and Safari b
 2. Add metrics/dashboard alerts.
 3. Tune model and chunk parameters for latency.
 
+## 12.1 Streaming Accuracy/Latency Pipeline Plan
+
+### Phase A (implemented): Hybrid server pipeline behind config flag
+1. Add runtime mode switch:
+   - `WS_PIPELINE_MODE=legacy` (existing behavior)
+   - `WS_PIPELINE_MODE=hybrid` (new behavior)
+2. Decode each incoming media chunk to mono PCM16@16kHz.
+3. Apply lightweight noise suppression before decoding.
+4. Use hybrid VAD:
+   - low start threshold for fast speech start
+   - stricter end threshold + hangover chunks for stable end-of-utterance
+5. Emit quick partials from a rolling overlap window (`partial_transcript`).
+6. Emit corrected final transcript with higher-quality decode (`final_transcript`) on VAD end or explicit `stop`.
+
+### Phase B (implemented/in progress): Quality tuning + resilience
+1. Add partial/final divergence metric and latency histograms in Prometheus.
+2. Add decode-path fallback instrumentation (hybrid unavailable, decode error, empty PCM).
+3. Emit session-level medians in `session_summary` for latency/divergence/fallbacks.
+4. Emit periodic `voice_tuning_window` recommendations from observed staging traces.
+5. Next: auto-tune VAD thresholds per session using ambient baseline.
+
+### Phase C (next): Stronger denoise path
+1. Replace lightweight suppression with dedicated NS backend (RNNoise/WebRTC NS/DeepFilterNet).
+2. Add model-specific profiles (CPU low-latency vs GPU higher-accuracy).
+3. Optional confidence-aware rendering contract (`provisional` tokens for UI).
+
 ## 13. Required Repo Changes (Targeted)
 1. `src/services/speechRecognitionPolyfill.ts`
    - Remove `annyang` as fallback.

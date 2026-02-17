@@ -6,6 +6,14 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const VOICE_API_KEY = process.env.NEXT_PUBLIC_VOICE_API_KEY;
 const VOICE_TRACE = process.env.NEXT_PUBLIC_VOICE_TRACE === 'true';
 const FORCE_HTTP_ONLY = process.env.NEXT_PUBLIC_FORCE_HTTP_ONLY !== 'false';
+/**
+ * Audio chunk timeslice in milliseconds for MediaRecorder.
+ * Lower values reduce latency but increase network overhead.
+ * Note: WebM format requires sufficient data for proper encoding.
+ * Values below 500ms may produce chunks that fail to decode.
+ * Default: 500ms balances latency with reliable audio encoding.
+ */
+const AUDIO_TIMESLICE_MS = Number(process.env.NEXT_PUBLIC_AUDIO_TIMESLICE_MS || '500');
 
 const voiceTrace = (event: string, data?: Record<string, unknown>) => {
   if (!VOICE_TRACE) return;
@@ -27,6 +35,14 @@ export interface TranscriptionResponse {
   text: string;
   /** Confidence score of the transcription (0-1) */
   confidence: number;
+}
+
+export type TranscriptEventType = 'partial' | 'final';
+
+export interface TranscriptEvent {
+  text: string;
+  confidence: number;
+  eventType: TranscriptEventType;
 }
 
 type SpeechServiceError = Error & {
@@ -237,7 +253,7 @@ export class SpeechRecognitionService {
    */
   static async streamAudioToText(
     mediaRecorder: MediaRecorder,
-    onTranscription: (text: string, confidence: number) => void,
+    onTranscription: (event: TranscriptEvent) => void,
     engine: 'whisper' | 'google' = 'whisper'
   ): Promise<void> {
     const traceId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -279,7 +295,7 @@ export class SpeechRecognitionService {
    */
   private static async streamAudioToTextWebSocket(
     mediaRecorder: MediaRecorder,
-    onTranscription: (text: string, confidence: number) => void,
+    onTranscription: (event: TranscriptEvent) => void,
     engine: 'whisper' | 'google' = 'whisper',
     traceId?: string
   ): Promise<void> {
@@ -305,7 +321,7 @@ export class SpeechRecognitionService {
       socket.onopen = () => {
         voiceTrace('ws.open', { traceId, wsUrl });
         socket.send(JSON.stringify({ type: 'start' }));
-        void this.startMediaRecorderWithRetry(mediaRecorder, 1000).catch((error) => {
+        void this.startMediaRecorderWithRetry(mediaRecorder, AUDIO_TIMESLICE_MS).catch((error) => {
           cleanup();
           reject(error instanceof Error ? error : new Error(String(error)));
         });
@@ -367,7 +383,11 @@ export class SpeechRecognitionService {
           });
           if (text && text !== lastDeliveredTranscript) {
             lastDeliveredTranscript = text;
-            onTranscription(text, Number(message.confidence ?? 0));
+            onTranscription({
+              text,
+              confidence: Number(message.confidence ?? 0),
+              eventType: message.type === 'final_transcript' ? 'final' : 'partial',
+            });
           }
           return;
         }
@@ -417,7 +437,7 @@ export class SpeechRecognitionService {
    */
   private static async streamAudioToTextHttp(
     mediaRecorder: MediaRecorder,
-    onTranscription: (text: string, confidence: number) => void,
+    onTranscription: (event: TranscriptEvent) => void,
     engine: 'whisper' | 'google' = 'whisper',
     traceId?: string
   ): Promise<void> {
@@ -430,6 +450,12 @@ export class SpeechRecognitionService {
 
       const processChunk = async (chunk: Blob) => {
         if (processing || hasFatalError || chunk.size === 0) return;
+        // Minimum chunk size to avoid sending incomplete audio data
+        // WebM headers + minimal audio data typically need at least 5KB
+        if (chunk.size < 5000) {
+          voiceTrace('http.chunk.skipped', { traceId, size: chunk.size, reason: 'too_small' });
+          return;
+        }
         processing = true;
         try {
           uploads += 1;
@@ -447,18 +473,28 @@ export class SpeechRecognitionService {
               uploads,
               textLength: normalized.length,
             });
-            onTranscription(normalized, result.confidence);
+            onTranscription({
+              text: normalized,
+              confidence: result.confidence,
+              eventType: 'final',
+            });
           }
         } catch (error) {
-          console.error('Error processing audio chunk:', error);
-          voiceTrace('http.stream.error', {
-            traceId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          if (this.isRecoverableChunkDecodeError(error)) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          // Silently handle recoverable decode errors (invalid data, tuple index, etc.)
+          const isDecodeError = this.isRecoverableChunkDecodeError(error) ||
+            errorMessage.includes('tuple index') ||
+            errorMessage.includes('Invalid data');
+          if (isDecodeError) {
+            voiceTrace('http.chunk.decode_error', { traceId, uploads, error: errorMessage });
             processing = false;
             return;
           }
+          console.error('Error processing audio chunk:', error);
+          voiceTrace('http.stream.error', {
+            traceId,
+            error: errorMessage,
+          });
           if (this.isFatalServiceError(error) && !hasFatalError) {
             hasFatalError = true;
             if (mediaRecorder.state !== 'inactive') {
@@ -480,12 +516,17 @@ export class SpeechRecognitionService {
         if (!event.data || event.data.size === 0) return;
         if (!initChunk) {
           initChunk = event.data;
+          // Don't process init chunk alone - wait for more data
+          return;
         } else {
           recentChunks.push(event.data);
-          if (recentChunks.length > 2) {
+          // Keep more chunks (4 instead of 2) for better audio context
+          if (recentChunks.length > 4) {
             recentChunks.shift();
           }
         }
+        // Only process after we have at least 2 chunks beyond init
+        if (recentChunks.length < 2) return;
         const windowChunks = [initChunk, ...recentChunks].filter(Boolean) as Blob[];
         const bufferedBlob = new Blob(windowChunks, { type: event.data.type || 'audio/webm' });
         void processChunk(bufferedBlob);
@@ -510,7 +551,7 @@ export class SpeechRecognitionService {
       };
 
       if (mediaRecorder.state === 'inactive') {
-        void this.startMediaRecorderWithRetry(mediaRecorder, 1000).catch((error) => {
+        void this.startMediaRecorderWithRetry(mediaRecorder, AUDIO_TIMESLICE_MS).catch((error) => {
           cleanup();
           reject(error instanceof Error ? error : new Error(String(error)));
         });

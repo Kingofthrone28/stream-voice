@@ -1,8 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { VoiceControlProps } from '@/types/voice';
 import { SpeechRecognitionPolyfill } from '@/services/speechRecognitionPolyfill';
-const COMMAND_CONFIDENCE_MIN = Number(process.env.NEXT_PUBLIC_COMMAND_CONFIDENCE_MIN || '0.55');
-const ENABLE_WAKE_PHRASE = process.env.NEXT_PUBLIC_ENABLE_WAKE_PHRASE !== 'false';
+
+// Confidence threshold for commands (0-1). Set to 0 to accept all.
+const COMMAND_CONFIDENCE_MIN = Number(process.env.NEXT_PUBLIC_COMMAND_CONFIDENCE_MIN || '0');
+// Wake phrase is DISABLED by default for simpler UX. Set to 'true' to require wake phrase.
+const ENABLE_WAKE_PHRASE = process.env.NEXT_PUBLIC_ENABLE_WAKE_PHRASE === 'true';
 const WAKE_PHRASE_WINDOW_MS = Number(process.env.NEXT_PUBLIC_WAKE_WINDOW_MS || '5000');
 const WAKE_PHRASE = (process.env.NEXT_PUBLIC_WAKE_PHRASE || 'hey stream').toLowerCase();
 const WAKE_ALIASES = (process.env.NEXT_PUBLIC_WAKE_ALIASES || 'ok stream,okay stream')
@@ -10,6 +13,7 @@ const WAKE_ALIASES = (process.env.NEXT_PUBLIC_WAKE_ALIASES || 'ok stream,okay st
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 const WAKE_PHRASES = [WAKE_PHRASE, ...WAKE_ALIASES];
+const VOICE_DEBUG = process.env.NEXT_PUBLIC_VOICE_TRACE === 'true';
 
 /**
  * Configuration options for voice control
@@ -55,6 +59,21 @@ export const useVoiceControl = (
   const lastCommandRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
   const startPromiseRef = useRef<Promise<boolean> | null>(null);
   const wakeArmedUntilRef = useRef<number>(0);
+  const dispatchCommand = useCallback((command: string, confidence: number): void => {
+    const now = Date.now();
+    // Deduplicate commands within 1.5s window
+    const isDuplicate = (
+      command === lastCommandRef.current.text &&
+      now - lastCommandRef.current.at < 1500
+    );
+    if (isDuplicate) {
+      if (VOICE_DEBUG) console.log(`[VOICE] Duplicate skipped: "${command}"`);
+      return;
+    }
+    lastCommandRef.current = { text: command, at: now };
+    console.log(`[VOICE] Command dispatched: "${command}" (confidence: ${confidence.toFixed(2)})`);
+    onCommand(command);
+  }, [onCommand]);
 
   /**
    * Initialize speech recognition polyfill
@@ -67,58 +86,60 @@ export const useVoiceControl = (
         continuous: true,
         interimResults: false,
         lang: options.language || 'en-US',
-        onResult: (transcript: string, confidence: number) => {
-          // A confidence value of 0 from backend is treated as "unknown",
-          // not low-confidence rejection.
-          if (confidence > 0 && confidence < COMMAND_CONFIDENCE_MIN) {
-            return;
-          }
+        onResult: (transcript: string, confidence: number, eventType) => {
+          // Normalize: lowercase, remove punctuation, collapse whitespace
           const normalized = transcript.trim().toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
           if (!normalized) return;
 
+          if (VOICE_DEBUG) {
+            console.log(`[VOICE] Received: "${normalized}" (confidence: ${confidence.toFixed(2)}, type: ${eventType})`);
+          }
+
+          // Only process final transcripts (not partials)
+          if (eventType !== 'final') {
+            return;
+          }
+
+          // Check confidence threshold (0 means accept all, or unknown confidence)
+          if (COMMAND_CONFIDENCE_MIN > 0 && confidence > 0 && confidence < COMMAND_CONFIDENCE_MIN) {
+            if (VOICE_DEBUG) console.log(`[VOICE] Below confidence threshold: ${confidence.toFixed(2)} < ${COMMAND_CONFIDENCE_MIN}`);
+            return;
+          }
+
+          const now = Date.now();
+
+          // Wake phrase handling (only if enabled)
           if (ENABLE_WAKE_PHRASE) {
-            const now = Date.now();
             const matchedWake = WAKE_PHRASES.find((phrase) => normalized.includes(phrase));
+            
             if (matchedWake) {
+              // Wake phrase detected - arm the window and extract trailing command
               wakeArmedUntilRef.current = now + WAKE_PHRASE_WINDOW_MS;
               setWakeArmed(true);
-              const trailing = normalized
-                .slice(normalized.lastIndexOf(matchedWake) + matchedWake.length)
-                .trim();
-              if (!trailing) {
-                return;
-              }
-              // Use command words spoken after wake phrase in same utterance.
+              const trailing = normalized.slice(normalized.lastIndexOf(matchedWake) + matchedWake.length).trim();
               if (trailing) {
-                const nowForTrailing = Date.now();
-                const isDuplicateTrailing = (
-                  trailing === lastCommandRef.current.text &&
-                  nowForTrailing - lastCommandRef.current.at < 700
-                );
-                if (isDuplicateTrailing) return;
-                lastCommandRef.current = { text: trailing, at: nowForTrailing };
-                console.log(`Speech recognized: "${trailing}" (confidence: ${confidence})`);
-                onCommand(trailing);
-                return;
+                dispatchCommand(trailing, confidence);
+                wakeArmedUntilRef.current = 0;
+                setWakeArmed(false);
               }
+              return;
             }
 
+            // No wake phrase - check if we're in armed window
             if (now > wakeArmedUntilRef.current) {
               if (wakeArmed) setWakeArmed(false);
+              if (VOICE_DEBUG) console.log(`[VOICE] Blocked (wake phrase required): "${normalized}"`);
               return;
             }
           }
 
-          const now = Date.now();
-          const isDuplicate = (
-            normalized === lastCommandRef.current.text &&
-            now - lastCommandRef.current.at < 700
-          );
-          if (isDuplicate) return;
-
-          lastCommandRef.current = { text: normalized, at: now };
-          console.log(`Speech recognized: "${normalized}" (confidence: ${confidence})`);
-          onCommand(normalized);
+          // Dispatch the command directly
+          dispatchCommand(normalized, confidence);
+          
+          if (ENABLE_WAKE_PHRASE) {
+            wakeArmedUntilRef.current = 0;
+            setWakeArmed(false);
+          }
         },
         onError: (errorMessage: string) => {
           console.error('Speech recognition error:', errorMessage);
@@ -162,7 +183,8 @@ export const useVoiceControl = (
       setPipelineState('idle');
       setWakeArmed(false);
     };
-  }, [onCommand, options.engine, options.language, options.mode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.engine, options.language, options.mode]);
 
   /**
    * Start speech recognition

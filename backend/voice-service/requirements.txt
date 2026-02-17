@@ -4,3 +4,4 @@ python-multipart==0.0.12
 faster-whisper==1.1.1
 prometheus-client==0.21.1
 requests==2.32.3
+imageio-ffmpeg==0.6.0
