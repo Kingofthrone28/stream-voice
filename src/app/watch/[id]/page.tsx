@@ -2,29 +2,23 @@ import { VideoPlayer } from '@/components/VideoPlayer';
 import { VoiceControlInfo } from '@/components/VoiceControlInfo';
 import { notFound } from 'next/navigation';
 import { Movie } from '@/types/movie';
+import { slugify } from '@/services/moviesApi';
 
-// This function fetches all movies and finds the one with the matching ID.
 async function getMovieById(id: string): Promise<Movie> {
-  // The API route now simply returns the full movies.json content.
   const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/movies`, {
-    // It's good practice to cache this fetch.
     next: {
-      revalidate: 3600 // Cache for 1 hour
+      revalidate: 3600
     }
   });
 
   if (!response.ok) {
-    // This will be caught by the error boundary
     throw new Error(`Failed to fetch movies: ${response.status} ${response.statusText}`);
   }
 
   const movies: Movie[] = await response.json();
-  
-  // Find the movie by its generated ID
-  const movie = movies.find((m) => m.title.toLowerCase().replace(/\s+/g, '-') === id);
+  const movie = movies.find((m) => slugify(m.title) === id);
 
   if (!movie) {
-    // If no movie is found, show the 404 page.
     notFound();
   }
 

@@ -371,7 +371,7 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
         )}
       </video>
 
-      <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
+      {/* <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
         <div className="flex items-center justify-between text-white">
           <div className="flex items-center gap-4">
             <button
@@ -419,7 +419,7 @@ export const VideoPlayer = ({ src, title, poster, subtitleUrl }: VideoPlayerProp
             </button>
           </div>
         </div>
-      </div>
+      </div> */}
 
       {error && (
         <div className="absolute top-4 right-4 bg-red-500 text-white px-4 py-2 rounded" role="alert">

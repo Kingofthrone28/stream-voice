@@ -5,7 +5,7 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const VOICE_API_KEY = process.env.NEXT_PUBLIC_VOICE_API_KEY;
 const VOICE_TRACE = process.env.NEXT_PUBLIC_VOICE_TRACE === 'true';
-const FORCE_HTTP_ONLY = process.env.NEXT_PUBLIC_FORCE_HTTP_ONLY !== 'false';
+const FORCE_HTTP_ONLY = process.env.NEXT_PUBLIC_FORCE_HTTP_ONLY === 'true';
 /**
  * Audio chunk timeslice in milliseconds for MediaRecorder.
  * Lower values reduce latency but increase network overhead.
@@ -481,28 +481,18 @@ export class SpeechRecognitionService {
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          // Silently handle recoverable decode errors (invalid data, tuple index, etc.)
-          const isDecodeError = this.isRecoverableChunkDecodeError(error) ||
-            errorMessage.includes('tuple index') ||
-            errorMessage.includes('Invalid data');
-          if (isDecodeError) {
-            voiceTrace('http.chunk.decode_error', { traceId, uploads, error: errorMessage });
-            processing = false;
-            return;
-          }
-          console.error('Error processing audio chunk:', error);
-          voiceTrace('http.stream.error', {
-            traceId,
-            error: errorMessage,
-          });
-          if (this.isFatalServiceError(error) && !hasFatalError) {
+          const lowerMsg = errorMessage.toLowerCase();
+          const isRecoverable = this.isRecoverableChunkDecodeError(error) ||
+            lowerMsg.includes('tuple index') ||
+            lowerMsg.includes('invalid data') ||
+            lowerMsg.includes('transcription failed') ||
+            lowerMsg.includes('500');
+          if (isRecoverable) {
+            voiceTrace('http.chunk.recoverable', { traceId, uploads, error: errorMessage });
+          } else if (this.isFatalServiceError(error) && !hasFatalError) {
             hasFatalError = true;
             if (mediaRecorder.state !== 'inactive') {
-              try {
-                mediaRecorder.stop();
-              } catch {
-                // no-op
-              }
+              try { mediaRecorder.stop(); } catch { /* no-op */ }
             }
             cleanup();
             reject(error instanceof Error ? error : new Error(String(error)));

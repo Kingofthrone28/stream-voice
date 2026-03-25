@@ -251,8 +251,24 @@ export class SpeechRecognitionPolyfill {
       },
       this.options.engine || 'whisper'
     )
+      .then(() => {
+        // Session ended normally (e.g. chunk/time limit) - auto-reconnect if still listening
+        if (sessionId === this.streamSessionId && this.isListening) {
+          voiceTrace('server.stream.reconnect', { sessionId });
+          this.streamPromise = null;
+          void this.startServerRecognition();
+        }
+      })
       .catch((error) => {
         if (sessionId !== this.streamSessionId) return;
+        const msg = String(error);
+        // Reconnect on recoverable session limits instead of erroring out
+        if (msg.includes('chunk limit') || msg.includes('Session timeout')) {
+          voiceTrace('server.stream.reconnect.after_limit', { sessionId, error: msg });
+          this.streamPromise = null;
+          void this.startServerRecognition();
+          return;
+        }
         this.options.onError?.(`Server speech recognition error: ${error}`);
         this.stop();
       })

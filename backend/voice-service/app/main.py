@@ -85,8 +85,8 @@ HTTP_RATE_LIMIT_WINDOW_SEC = int(os.getenv("HTTP_RATE_LIMIT_WINDOW_SEC", "60"))
 HTTP_RATE_LIMIT_MAX = int(os.getenv("HTTP_RATE_LIMIT_MAX", "120"))
 WS_RATE_LIMIT_WINDOW_SEC = int(os.getenv("WS_RATE_LIMIT_WINDOW_SEC", "10"))
 WS_RATE_LIMIT_MAX = int(os.getenv("WS_RATE_LIMIT_MAX", "40"))
-WS_MAX_SESSION_SECONDS = int(os.getenv("WS_MAX_SESSION_SECONDS", "300"))
-WS_MAX_CHUNKS = int(os.getenv("WS_MAX_CHUNKS", "120"))
+WS_MAX_SESSION_SECONDS = int(os.getenv("WS_MAX_SESSION_SECONDS", "1800"))
+WS_MAX_CHUNKS = int(os.getenv("WS_MAX_CHUNKS", "3600"))
 WS_PARTIAL_EVERY_CHUNKS = int(os.getenv("WS_PARTIAL_EVERY_CHUNKS", "3"))
 MAX_CONCURRENT_WS = int(os.getenv("MAX_CONCURRENT_WS", "20"))
 WHISPER_VAD_FILTER = os.getenv("WHISPER_VAD_FILTER", "false").lower() == "true"
@@ -686,16 +686,13 @@ async def transcribe_websocket(websocket: WebSocket) -> None:
         _record_decode_fallback("hybrid_unavailable")
 
     await websocket.send_json({"type": "ready"})
-    transcript_parts: list[str] = []
     session_suffix = ".webm"
-    last_partial_text = ""
+    last_emitted_text = ""
     last_confidence = 0.0
     session_started_at = time.time()
     chunks_processed = 0
-    pipeline = StreamPipelineState()
-    overlap_samples = max(0, int(WS_AUDIO_SAMPLE_RATE * WS_OVERLAP_MS / 1000))
-    partial_window_samples = max(1, int(WS_AUDIO_SAMPLE_RATE * WS_PARTIAL_WINDOW_MS / 1000))
-    overlap_tail = np.zeros((0,), dtype=np.float32) if np is not None else None
+    # Accumulate all WebM bytes in order so ffmpeg can decode the full stream.
+    cumulative_audio = bytearray()
 
     try:
         while True:
@@ -757,251 +754,75 @@ async def transcribe_websocket(websocket: WebSocket) -> None:
 
                 session_suffix = _mime_to_suffix(normalized_mime)
 
-                used_hybrid = False
-                if WS_PIPELINE_MODE == "hybrid" and WS_HYBRID_READY:
-                    decode_failed = False
+                # Accumulate all WebM bytes sequentially so the full container is decodable.
+                cumulative_audio.extend(audio_bytes)
+
+                # Transcribe every N chunks using the full cumulative audio buffer.
+                if chunks_processed % WS_PARTIAL_EVERY_CHUNKS == 0:
                     try:
-                        pcm_bytes = _decode_to_pcm16_mono(audio_bytes, session_suffix)
-                        chunk_samples = _pcm16_to_float32(pcm_bytes)
-                    except Exception as decode_error:
-                        _record_decode_fallback("decode_error")
-                        pipeline.decode_fallbacks += 1
-                        decode_failed = True
+                        result = _transcribe_bytes(bytes(cumulative_audio), session_suffix)
+                        text = result.text.strip()
+                        if text and text != last_emitted_text:
+                            _inc_metric("ws_partials_emitted_total")
+                            await websocket.send_json({
+                                "type": "partial_transcript",
+                                "text": text,
+                                "confidence": result.confidence,
+                            })
+                            # Emit as final too so frontend can act on it immediately
+                            await websocket.send_json({
+                                "type": "final_transcript",
+                                "text": text,
+                                "confidence": result.confidence,
+                            })
+                            _inc_metric("ws_finals_emitted_total")
+                            last_emitted_text = text
+                            last_confidence = result.confidence
+                            # Reset buffer after successful transcription to keep latency low
+                            cumulative_audio.clear()
+                    except HTTPException:
+                        pass
+                    except Exception as err:
                         if VOICE_TRACE:
                             logger.warning(
-                                "voice_trace_ws_decode_fallback session_id=%s chunk=%s error=%s",
-                                session_id,
-                                chunks_processed,
-                                decode_error,
-                            )
-                        chunk_samples = None
-
-                    if not decode_failed and (chunk_samples is None or chunk_samples.size == 0):
-                        _record_decode_fallback("empty_pcm")
-                        pipeline.decode_fallbacks += 1
-                    if chunk_samples is not None and chunk_samples.size > 0:
-                        used_hybrid = True
-                        prior_overlap = overlap_tail.copy() if overlap_tail is not None else None
-                        denoised = _light_noise_suppress(chunk_samples)
-                        chunk_rms = _rms(denoised)
-
-                        if not pipeline.speech_active and chunk_rms >= WS_VAD_START_RMS:
-                            pipeline.speech_active = True
-                            pipeline.silence_streak = 0
-                            pipeline.utterance_started_at = time.time()
-                            if (
-                                prior_overlap is not None
-                                and prior_overlap.size > 0
-                                and (pipeline.utterance_samples is not None and pipeline.utterance_samples.size == 0)
-                            ):
-                                pipeline.append_samples(prior_overlap)
-
-                        if pipeline.speech_active and denoised is not None:
-                            pipeline.append_samples(denoised)
-                            if chunk_rms <= WS_VAD_END_RMS:
-                                pipeline.silence_streak += 1
-                            else:
-                                pipeline.silence_streak = 0
-
-                            if (
-                                chunks_processed % WS_PARTIAL_EVERY_CHUNKS == 0
-                                and pipeline.utterance_samples is not None
-                                and pipeline.utterance_samples.size > 0
-                            ):
-                                partial_samples = pipeline.utterance_samples[-partial_window_samples:]
-                                try:
-                                    partial_result = _transcribe_samples(
-                                        partial_samples,
-                                        beam_size=WS_PARTIAL_BEAM_SIZE,
-                                        vad_filter=False,
-                                    )
-                                    partial_text = partial_result.text.strip()
-                                    if partial_text and partial_text != pipeline.last_partial_text:
-                                        pipeline.last_partial_text = partial_text
-                                        pipeline.last_partial_confidence = partial_result.confidence
-                                        pipeline.partials_emitted += 1
-                                        _inc_metric("ws_partials_emitted_total")
-                                        last_partial_text = partial_text
-                                        last_confidence = partial_result.confidence
-                                        if pipeline.utterance_started_at > 0:
-                                            partial_latency_ms = (time.time() - pipeline.utterance_started_at) * 1000.0
-                                            pipeline.partial_latency_ms.append(partial_latency_ms)
-                                            PROM_WS_PARTIAL_LATENCY_MS.observe(partial_latency_ms)
-                                        await websocket.send_json(
-                                            {
-                                                "type": "partial_transcript",
-                                                "text": partial_text,
-                                                "confidence": partial_result.confidence,
-                                            }
-                                        )
-                                except Exception:
-                                    if VOICE_TRACE:
-                                        logger.exception(
-                                            "voice_trace_ws_partial_failed session_id=%s chunk=%s",
-                                            session_id,
-                                            chunks_processed,
-                                        )
-
-                            if pipeline.silence_streak >= WS_VAD_HANGOVER_CHUNKS:
-                                final_samples = pipeline.utterance_samples.copy()
-                                pipeline.clear_utterance()
-                                try:
-                                    final_result = _transcribe_samples(
-                                        final_samples,
-                                        beam_size=WS_FINAL_BEAM_SIZE,
-                                        vad_filter=WS_FINAL_VAD_FILTER,
-                                    )
-                                    final_text = final_result.text.strip()
-                                    if final_text:
-                                        pipeline.last_final_text = final_text
-                                        pipeline.last_final_confidence = final_result.confidence
-                                        pipeline.finals_emitted += 1
-                                        _inc_metric("ws_finals_emitted_total")
-                                        if pipeline.utterance_started_at > 0:
-                                            final_latency_ms = (time.time() - pipeline.utterance_started_at) * 1000.0
-                                            pipeline.final_latency_ms.append(final_latency_ms)
-                                            PROM_WS_FINAL_LATENCY_MS.observe(final_latency_ms)
-                                        if pipeline.last_partial_text:
-                                            divergence = _transcript_divergence_ratio(
-                                                pipeline.last_partial_text,
-                                                final_text,
-                                            )
-                                            pipeline.divergence_ratio.append(divergence)
-                                            PROM_WS_PARTIAL_FINAL_DIVERGENCE.observe(divergence)
-                                        await websocket.send_json(
-                                            {
-                                                "type": "final_transcript",
-                                                "text": final_text,
-                                                "confidence": final_result.confidence,
-                                            }
-                                        )
-                                except Exception:
-                                    if VOICE_TRACE:
-                                        logger.exception(
-                                            "voice_trace_ws_final_failed session_id=%s chunk=%s",
-                                            session_id,
-                                            chunks_processed,
-                                        )
-
-                        if overlap_tail is not None and denoised is not None:
-                            overlap_tail = denoised[-overlap_samples:].copy() if overlap_samples > 0 else overlap_tail
-
-                if not used_hybrid:
-                    # Legacy chunk-by-chunk fallback for compatibility or decode failures.
-                    try:
-                        chunk_result = _transcribe_bytes(audio_bytes, session_suffix)
-                        chunk_text = chunk_result.text.strip()
-                        if chunk_text:
-                            if not transcript_parts or transcript_parts[-1] != chunk_text:
-                                transcript_parts.append(chunk_text)
-                            last_confidence = chunk_result.confidence
-                    except HTTPException:
-                        # Some chunks are undecodable in isolation; keep the stream alive.
-                        pass
-
-                    if chunks_processed % WS_PARTIAL_EVERY_CHUNKS == 0 and transcript_parts:
-                        partial_text = " ".join(transcript_parts).strip()
-                        if partial_text and partial_text != last_partial_text:
-                            last_partial_text = partial_text
-                            _inc_metric("ws_partials_emitted_total")
-                            await websocket.send_json(
-                                {
-                                    "type": "partial_transcript",
-                                    "text": partial_text,
-                                    "confidence": last_confidence,
-                                }
+                                "voice_trace_ws_transcribe_error session_id=%s chunk=%s error=%s",
+                                session_id, chunks_processed, err,
                             )
                 continue
 
             if message_type == "stop":
                 final_text = ""
-                final_confidence = 0.0
+                final_confidence = last_confidence
 
-                if (
-                    WS_PIPELINE_MODE == "hybrid"
-                    and WS_HYBRID_READY
-                    and pipeline.utterance_samples is not None
-                    and pipeline.utterance_samples.size > 0
-                ):
+                # Transcribe any remaining audio in the buffer
+                if cumulative_audio:
                     try:
-                        final_result = _transcribe_samples(
-                            pipeline.utterance_samples,
-                            beam_size=WS_FINAL_BEAM_SIZE,
-                            vad_filter=WS_FINAL_VAD_FILTER,
-                        )
-                        final_text = final_result.text.strip()
-                        final_confidence = final_result.confidence
-                        pipeline.last_final_text = final_text
-                        pipeline.last_final_confidence = final_confidence
-                        pipeline.finals_emitted += 1 if final_text else 0
-                        if final_text:
-                            _inc_metric("ws_finals_emitted_total")
-                            if pipeline.utterance_started_at > 0:
-                                final_latency_ms = (time.time() - pipeline.utterance_started_at) * 1000.0
-                                pipeline.final_latency_ms.append(final_latency_ms)
-                                PROM_WS_FINAL_LATENCY_MS.observe(final_latency_ms)
-                            if pipeline.last_partial_text:
-                                divergence = _transcript_divergence_ratio(
-                                    pipeline.last_partial_text,
-                                    final_text,
-                                )
-                                pipeline.divergence_ratio.append(divergence)
-                                PROM_WS_PARTIAL_FINAL_DIVERGENCE.observe(divergence)
+                        result = _transcribe_bytes(bytes(cumulative_audio), session_suffix)
+                        final_text = result.text.strip()
+                        final_confidence = result.confidence
                     except Exception:
                         if VOICE_TRACE:
                             logger.exception("voice_trace_ws_stop_final_failed session_id=%s", session_id)
-                    pipeline.clear_utterance()
-                elif transcript_parts:
-                    final_text = " ".join(transcript_parts).strip()
-                    final_confidence = last_confidence
-                elif pipeline.last_final_text:
-                    final_text = pipeline.last_final_text
-                    final_confidence = pipeline.last_final_confidence
-                elif last_partial_text:
-                    final_text = last_partial_text
-                    final_confidence = 1.0
+                elif last_emitted_text:
+                    final_text = last_emitted_text
 
-                session_partial_latency = _median(pipeline.partial_latency_ms)
-                session_final_latency = _median(pipeline.final_latency_ms)
-                session_divergence = _median(pipeline.divergence_ratio)
-                _report_tuning_window_if_needed(
-                    session_id=session_id,
-                    partial_latency_ms=session_partial_latency,
-                    final_latency_ms=session_final_latency,
-                    divergence_ratio=session_divergence,
-                    decode_fallbacks=float(pipeline.decode_fallbacks),
-                )
-
-                await websocket.send_json(
-                    {
+                if final_text:
+                    await websocket.send_json({
                         "type": "final_transcript",
                         "text": final_text,
                         "confidence": final_confidence,
-                    }
-                )
-                if final_text:
+                    })
                     _inc_metric("ws_finals_emitted_total")
+
                 if VOICE_TRACE:
                     logger.info(
                         "voice_trace_ws_final session_id=%s text_len=%s confidence=%.3f chunks=%s",
-                        session_id,
-                        len(final_text),
-                        final_confidence,
-                        chunks_processed,
+                        session_id, len(final_text), final_confidence, chunks_processed,
                     )
-                await websocket.send_json(
-                    {
-                        "type": "session_summary",
-                        "chunks": chunks_processed,
-                        "partialsEmitted": pipeline.partials_emitted,
-                        "finalsEmitted": pipeline.finals_emitted,
-                        "partialLatencyMsMedian": round(session_partial_latency, 2),
-                        "finalLatencyMsMedian": round(session_final_latency, 2),
-                        "partialFinalDivergenceMedian": round(session_divergence, 4),
-                        "decodeFallbacks": pipeline.decode_fallbacks,
-                        "pipelineMode": WS_PIPELINE_MODE,
-                    }
-                )
+                await websocket.send_json({
+                    "type": "session_summary",
+                    "chunks": chunks_processed,
+                })
                 logger.info("voice_ws_session_complete session_id=%s client=%s chunks=%s", session_id, client_ip, chunks_processed)
                 await websocket.close()
                 return

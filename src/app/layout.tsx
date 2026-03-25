@@ -28,7 +28,7 @@ export default function RootLayout({
                 <h3 className="text-lg font-semibold mb-4">About StreamVoice</h3>
                 <p className="text-foreground/60">
                   A modern streaming platform with voice control capabilities,
-                  built with Next.js and TypeScript.
+                  built with Next.js and TypeScript, Whisper and FastAPI.
                 </p>
               </div>
               
@@ -38,7 +38,6 @@ export default function RootLayout({
                   <li>Play/Pause</li>
                   <li>Skip Intro</li>
                   <li>Enable/Disable Subtitles (CC for Avengers Infinity War Only)</li>
-                  <li>Search Content</li>
                 </ul>
               </div>
               
@@ -48,7 +47,8 @@ export default function RootLayout({
                   <li>Next.js</li>
                   <li>TypeScript</li>
                   <li>Tailwind CSS</li>
-                  <li>Web Speech API</li>
+                  <li>FastAPI</li>
+                  <li>Whisper</li>
                 </ul>
               </div>
             </div>
